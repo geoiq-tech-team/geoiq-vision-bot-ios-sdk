@@ -1,4 +1,3 @@
-
 @_exported import LiveKit
 import Foundation
 import Combine
@@ -21,12 +20,12 @@ public enum GeoVisionEvent {
     case participantAttributesChanged(participant: Participant, metadata: String)
 }
 
-public class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
+open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public let eventPublisher = PassthroughSubject<GeoVisionEvent, Never>()
     private(set) public var room: Room?
 
-    override init() {
+    public override init() {
         self.room = Room()
         super.init()
         room?.delegates.add(delegate: self)
