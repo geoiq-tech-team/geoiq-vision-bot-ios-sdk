@@ -1,5 +1,5 @@
 
-# GeoIQ iOS Video SDK
+# GeoIQ iOS Vision Bot SDK
 
 The **GeoIQ iOS Video SDK** provides a lightweight and customizable way to integrate real-time video and audio communication into your iOS applications. It supports Swift and SwiftUI, and leverages Combine for reactive event handling.
 
