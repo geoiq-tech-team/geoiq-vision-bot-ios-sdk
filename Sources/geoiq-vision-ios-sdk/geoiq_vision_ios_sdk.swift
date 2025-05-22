@@ -18,6 +18,7 @@ public enum GeoVisionEvent {
     case localCameraStateChanged(enabled: Bool)
     case localSpeakingChanged(isSpeaking: Bool)
     case participantAttributesChanged(participant: Participant, metadata: String)
+    case transcriptionReceived(Participant,TrackPublication, [TranscriptionSegment])
 }
 
 open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
@@ -141,6 +142,10 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         let message = String(data: data, encoding: .utf8) ?? "<invalid data>"
         let from = participant?.identity?.stringValue
         eventPublisher.send(.customMessageReceived(from: from, message: message, topic: topic))
+    }
+
+    public func room(_ room: Room, participant: Participant, trackPublication : TrackPublication, didReceiveTranscriptionSegments segments: [TranscriptionSegment]) {
+        eventPublisher.send(.transcriptionReceived(participant, trackPublication, segments))
     }
 
     // MARK: - ParticipantDelegate Methods
