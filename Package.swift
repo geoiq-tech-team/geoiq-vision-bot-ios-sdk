@@ -22,7 +22,8 @@ let package = Package(
             name: "geoiq_ios_lk_vision_bot_sdk",
             dependencies: [
                 .product(name: "LiveKit", package: "client-sdk-swift"),
-            ]
+            ],
+            path: "Sources/geoiq-vision-ios-sdk"
         ),
     ]
 )
