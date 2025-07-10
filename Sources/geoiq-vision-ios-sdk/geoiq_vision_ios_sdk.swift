@@ -19,6 +19,7 @@ public enum GeoVisionEvent {
     case localSpeakingChanged(isSpeaking: Bool)
     case participantAttributesChanged(participant: Participant, metadata: String)
     case transcriptionReceived(Participant,TrackPublication, [TranscriptionSegment])
+    case connectionQualityChanged(quality: ConnectionQuality, participant: Participant)
 }
 
 open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
@@ -107,9 +108,12 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public func enableCamera(_ enable: Bool) {
         guard let room = room else { return }
+        let options = CameraCaptureOptions(
+            position: .front
+        )
         Task {
             do {
-                try await room.localParticipant.setCamera(enabled: enable)
+                try await room.localParticipant.setCamera(enabled: enable, captureOptions: options)
                 eventPublisher.send(.localCameraStateChanged(enabled: enable))
             } catch {
                 eventPublisher.send(.error(message: "Failed to toggle camera", error: error))
@@ -162,6 +166,12 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         eventPublisher.send(.trackUnsubscribed(track, publication, participant))
     }
 
+    public func participant(_ participant: RemoteParticipant, didReceiveData data: Data, forTopic topic: String) {
+        let message = String(data: data, encoding: .utf8) ?? "<invalid data>"
+        let from = participant.identity?.stringValue
+        eventPublisher.send(.customMessageReceived(from: from, message: message, topic: topic))
+    }
+
     public func participant(_ participant: Participant, trackPublication: TrackPublication, didUpdateIsMuted isMuted: Bool) {
         if participant is LocalParticipant {
             switch trackPublication.kind {
@@ -185,10 +195,10 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         let meta = metadata ?? ""
         eventPublisher.send(.participantAttributesChanged(participant: participant, metadata: meta))
     }
-    
-    public func participant(_ participant: RemoteParticipant, didReceiveData data: Data, forTopic topic: String) {
-        let message = String(data: data, encoding: .utf8) ?? "<invalid data>"
-        let from = participant.identity?.stringValue
-        eventPublisher.send(.customMessageReceived(from: from, message: message, topic: topic))
+
+    public func participant(_ participant: Participant, didUpdateConnectionQuality connectionQuality: ConnectionQuality) {
+        eventPublisher.send(
+            .connectionQualityChanged(quality: connectionQuality, participant: participant)
+        )
     }
 }
