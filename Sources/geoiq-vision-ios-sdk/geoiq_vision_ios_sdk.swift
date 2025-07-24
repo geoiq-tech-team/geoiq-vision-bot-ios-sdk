@@ -4,22 +4,22 @@ import Combine
 
 public enum GeoVisionEvent {
     case connecting(url: String, tokenSnippet: String)
-    case connected(roomName: String, localParticipant: LocalParticipant)
+    case connected(roomName: String, localParticipant: VisionBotLocalParticipant)
     case disconnected(reason: String?)
-    case participantJoined(RemoteParticipant)
-    case participantLeft(RemoteParticipant)
-    case trackPublished(TrackPublication, LocalParticipant)
-    case trackSubscribed(Track, TrackPublication, RemoteParticipant)
-    case trackUnsubscribed(Track, TrackPublication, RemoteParticipant)
-    case activeSpeakersChanged([Participant])
+    case participantJoined(VisionBotRemoteParticipant)
+    case participantLeft(VisionBotRemoteParticipant)
+    case trackPublished(VisionBotTrackPublication, VisionBotLocalParticipant)
+    case trackSubscribed(VisionBotTrack, VisionBotTrackPublication, VisionBotRemoteParticipant)
+    case trackUnsubscribed(VisionBotTrack, VisionBotTrackPublication, VisionBotRemoteParticipant)
+    case activeSpeakersChanged([VisionBotParticipant])
     case error(message: String, error: Error?)
     case customMessageReceived(from: String?, message: String, topic: String?)
     case localMicStateChanged(enabled: Bool)
     case localCameraStateChanged(enabled: Bool)
     case localSpeakingChanged(isSpeaking: Bool)
-    case participantAttributesChanged(participant: Participant, metadata: String)
-    case transcriptionReceived(Participant,TrackPublication, [TranscriptionSegment])
-    case connectionQualityChanged(quality: ConnectionQuality, participant: Participant)
+    case participantAttributesChanged(participant: VisionBotParticipant, metadata: String)
+    case transcriptionReceived(VisionBotParticipant,VisionBotTrackPublication, [VisionBotTranscriptionSegment])
+    case connectionQualityChanged(quality: VisionBotConnectionQuality, participant: VisionBotParticipant)
 }
 
 public typealias VisionBotRoom = Room
@@ -29,29 +29,36 @@ public typealias VisionBotVideoTrack = VideoTrack
 public typealias VisionBotTranscriptionSegment = TranscriptionSegment
 public typealias VisionBotDataPublishOptions = DataPublishOptions
 public typealias VisionBotVideoView = VideoView
+public typealias VisionBotParticipant = Participant
+public typealias VisionBotTrackPublication = TrackPublication
+public typealias VisionBotTrack = Track
+public typealias VisionBotConnectionQuality = ConnectionQuality
+public typealias VisionBotConnectionState = ConnectionState
+public typealias VisionBotRoomDelegate = RoomDelegate
+public typealias VisionBotParticipantDelegate = ParticipantDelegate
 
-open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
+open class VisionBotSDKMananger: NSObject, VisionBotRoomDelegate, VisionBotParticipantDelegate {
 
     public let eventPublisher = PassthroughSubject<GeoVisionEvent, Never>()
-    private(set) public var room: Room?
+    private(set) public var room: VisionBotRoom?
 
     public override init() {
-        self.room = Room()
+        self.room = VisionBotRoom()
         super.init()
         room?.delegates.add(delegate: self)
     }
 
     // MARK: - Public Accessors
 
-    public var currentRoom: Room? {
+    public var currentRoom: VisionBotRoom? {
         return room
     }
 
-    public var localParticipant: LocalParticipant? {
+    public var localParticipant: VisionBotLocalParticipant? {
         return room?.localParticipant
     }
 
-    public var remoteParticipants: [String: RemoteParticipant] {
+    public var remoteParticipants: [String: VisionBotRemoteParticipant] {
         return room?.remoteParticipants.reduce(into: [:]) { result, pair in
             result[pair.key.stringValue] = pair.value
         } ?? [:]
@@ -131,57 +138,57 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     // MARK: - RoomDelegate Methods
 
-    public func room(_ room: Room, didUpdate connectionState: ConnectionState, oldState: ConnectionState) {
+    public func room(_ room: VisionBotRoom, didUpdate connectionState: VisionBotConnectionState, oldState: VisionBotConnectionState) {
         if connectionState == .disconnected {
             eventPublisher.send(.disconnected(reason: "Connection lost"))
         }
     }
 
-    public func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
+    public func room(_ room: VisionBotRoom, participantDidConnect participant: VisionBotRemoteParticipant) {
         participant.add(delegate: self)
         eventPublisher.send(.participantJoined(participant))
     }
 
-    public func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
+    public func room(_ room: VisionBotRoom, participantDidDisconnect participant: VisionBotRemoteParticipant) {
         eventPublisher.send(.participantLeft(participant))
     }
 
-    public func room(_ room: Room, activeSpeakersChanged speakers: [Participant]) {
+    public func room(_ room: VisionBotRoom, activeSpeakersChanged speakers: [VisionBotParticipant]) {
         eventPublisher.send(.activeSpeakersChanged(speakers))
     }
 
-    public func room(_ room: Room, didReceive data: Data, participant: RemoteParticipant?, topic: String?) {
+    public func room(_ room: VisionBotRoom, didReceive data: Data, participant: VisionBotRemoteParticipant?, topic: String?) {
         let message = String(data: data, encoding: .utf8) ?? "<invalid data>"
         let from = participant?.identity?.stringValue
         eventPublisher.send(.customMessageReceived(from: from, message: message, topic: topic))
     }
 
-    public func room(_ room: Room, participant: Participant, trackPublication : TrackPublication, didReceiveTranscriptionSegments segments: [TranscriptionSegment]) {
+    public func room(_ room: VisionBotRoom, participant: VisionBotParticipant, trackPublication : VisionBotTrackPublication, didReceiveTranscriptionSegments segments: [VisionBotTranscriptionSegment]) {
         eventPublisher.send(.transcriptionReceived(participant, trackPublication, segments))
     }
 
     // MARK: - ParticipantDelegate Methods
 
-    public func participant(_ participant: RemoteParticipant, didSubscribeTrack track: Track) {
+    public func participant(_ participant: VisionBotRemoteParticipant, didSubscribeTrack track: VisionBotTrack) {
         guard let sid = track.sid else { return }
         guard let publication = participant.trackPublications[sid] else { return }
         eventPublisher.send(.trackSubscribed(track, publication, participant))
     }
 
-    public func participant(_ participant: RemoteParticipant, didUnsubscribeTrack track: Track) {
+    public func participant(_ participant: VisionBotRemoteParticipant, didUnsubscribeTrack track: VisionBotTrack) {
         guard let sid = track.sid else { return }
         guard let publication = participant.trackPublications[sid] else { return }
         eventPublisher.send(.trackUnsubscribed(track, publication, participant))
     }
 
-    public func participant(_ participant: RemoteParticipant, didReceiveData data: Data, forTopic topic: String) {
+    public func participant(_ participant: VisionBotRemoteParticipant, didReceiveData data: Data, forTopic topic: String) {
         let message = String(data: data, encoding: .utf8) ?? "<invalid data>"
         let from = participant.identity?.stringValue
         eventPublisher.send(.customMessageReceived(from: from, message: message, topic: topic))
     }
 
-    public func participant(_ participant: Participant, trackPublication: TrackPublication, didUpdateIsMuted isMuted: Bool) {
-        if participant is LocalParticipant {
+    public func participant(_ participant: VisionBotParticipant, trackPublication: VisionBotTrackPublication, didUpdateIsMuted isMuted: Bool) {
+        if participant is VisionBotLocalParticipant {
             switch trackPublication.kind {
             case .audio:
                 eventPublisher.send(.localMicStateChanged(enabled: !isMuted))
@@ -193,18 +200,18 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         }
     }
 
-    public func participant(_ participant: Participant, didUpdateIsSpeaking isSpeaking: Bool) {
-        if participant is LocalParticipant {
+    public func participant(_ participant: VisionBotParticipant, didUpdateIsSpeaking isSpeaking: Bool) {
+        if participant is VisionBotLocalParticipant {
             eventPublisher.send(.localSpeakingChanged(isSpeaking: isSpeaking))
         }
     }
 
-    public func participant(_ participant: Participant, didUpdateMetadata metadata: String?) {
+    public func participant(_ participant: VisionBotParticipant, didUpdateMetadata metadata: String?) {
         let meta = metadata ?? ""
         eventPublisher.send(.participantAttributesChanged(participant: participant, metadata: meta))
     }
 
-    public func participant(_ participant: Participant, didUpdateConnectionQuality connectionQuality: ConnectionQuality) {
+    public func participant(_ participant: VisionBotParticipant, didUpdateConnectionQuality connectionQuality: VisionBotConnectionQuality) {
         eventPublisher.send(
             .connectionQualityChanged(quality: connectionQuality, participant: participant)
         )
