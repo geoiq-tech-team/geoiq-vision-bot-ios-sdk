@@ -1,4 +1,4 @@
-@_exported import LiveKit
+import LiveKit
 import Foundation
 import Combine
 
@@ -21,6 +21,14 @@ public enum GeoVisionEvent {
     case transcriptionReceived(Participant,TrackPublication, [TranscriptionSegment])
     case connectionQualityChanged(quality: ConnectionQuality, participant: Participant)
 }
+
+public typealias VisionBotRoom = Room
+public typealias VisionBotLocalParticipant = LocalParticipant
+public typealias VisionBotRemoteParticipant = RemoteParticipant
+public typealias VisionBotVideoTrack = VideoTrack
+public typealias VisionBotTranscriptionSegment = TranscriptionSegment
+public typealias VisionBotDataPublishOptions = DataPublishOptions
+public typealias VisionBotVideoView = VideoView
 
 open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
