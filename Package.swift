@@ -10,6 +10,7 @@ let package = Package(
     products: [
         .library(
             name: "geoiq_ios_lk_vision_bot_sdk",
+            type: .dynamic,
             targets: ["geoiq_ios_lk_vision_bot_sdk"]
         ),
     ],
