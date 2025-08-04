@@ -121,6 +121,23 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         }
     }
 
+    public func flipCameraPosition() {
+        guard let cameraTrack = room?.localParticipant.videoTracks.first?.track as? LocalVideoTrack,
+              
+        let cameraCapturer = cameraTrack.capturer as? CameraCapturer else {
+            eventPublisher.send(.error(message: "Camera capturer not available.", error: nil))
+            return
+        }
+
+        Task {
+            do {
+                try await cameraCapturer.switchCameraPosition()
+            } catch {
+                eventPublisher.send(.error(message: "Failed to flip camera", error: error))
+            }
+        }
+    }
+
     // MARK: - RoomDelegate Methods
 
     public func room(_ room: Room, didUpdate connectionState: ConnectionState, oldState: ConnectionState) {
