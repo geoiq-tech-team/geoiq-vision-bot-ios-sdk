@@ -209,8 +209,15 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
     }
 
     public func participant(_ participant: Participant, didUpdateMetadata metadata: String?) {
-        let meta = metadata ?? ""
-        eventPublisher.send(.participantAttributesChanged(participant: participant, metadata: meta))
+        // let meta = metadata ?? ""
+        // eventPublisher.send(.participantAttributesChanged(participant: participant, metadata: meta))
+    }
+
+    public func participant(_ participant: Participant, didUpdateAttributes attributes: [String: String]) {
+        if let data = try? JSONSerialization.data(withJSONObject: attributes),
+        let jsonString = String(data: data, encoding: .utf8) {
+            eventPublisher.send(.participantAttributesChanged(participant: participant, metadata: jsonString))
+        }
     }
 
     public func participant(_ participant: Participant, didUpdateConnectionQuality connectionQuality: ConnectionQuality) {
