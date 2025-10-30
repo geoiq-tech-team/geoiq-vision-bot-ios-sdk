@@ -1,6 +1,8 @@
 @_exported import LiveKit
 import Foundation
 import Combine
+import AVFoundation
+
 
 public enum GeoVisionEvent {
     case connecting(url: String, tokenSnippet: String)
