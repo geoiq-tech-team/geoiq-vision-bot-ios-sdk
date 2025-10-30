@@ -131,7 +131,15 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
         Task {
             do {
-                try await cameraCapturer.switchCameraPosition()
+                let currentOptions = cameraCapturer.options
+                // Determine the new position
+                let newPosition: AVCaptureDevice.Position = if currentOptions.position == .front {
+                    .back
+                }else{
+                    .front
+                }
+                // try await cameraCapturer.switchCameraPosition()
+                try await cameraCapturer.set(cameraPosition: newPosition)
             } catch {
                 eventPublisher.send(.error(message: "Failed to flip camera", error: error))
             }
