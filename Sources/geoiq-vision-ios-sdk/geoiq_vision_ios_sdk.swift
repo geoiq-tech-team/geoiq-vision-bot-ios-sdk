@@ -3,7 +3,6 @@ import Foundation
 import Combine
 import AVFoundation
 
-
 public enum GeoVisionEvent {
     case connecting(url: String, tokenSnippet: String)
     case connected(roomName: String, localParticipant: LocalParticipant)
@@ -67,14 +66,23 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
             eventPublisher.send(.error(message: "Already connected or connecting.", error: nil))
             return
         }
-
+        
         eventPublisher.send(.connecting(url: url, tokenSnippet: String(token.suffix(10))))
-
+        
         Task {
             do {
                 try await room?.connect(url: url, token: token)
+                
                 if let room = room {
                     room.localParticipant.add(delegate: self)
+                    // :dart: THIS IS THE FIX: Manually handle existing participants
+                    for (_, participant) in room.remoteParticipants {
+                        // Add delegate to receive events from this participant
+                        participant.add(delegate: self)
+                        // Manually trigger YOUR handler (since delegate won't be called)
+                        eventPublisher.send(.participantJoined(participant))
+                    }
+                    
                     eventPublisher.send(.connected(roomName: room.name ?? "Unnamed", localParticipant: room.localParticipant))
                 }
             } catch {
