@@ -27,6 +27,8 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public let eventPublisher = PassthroughSubject<GeoVisionEvent, Never>()
     private(set) public var room: Room?
+    private var isFlippingCamera = false
+
 
     public override init() {
         self.room = Room()
@@ -132,25 +134,45 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
     }
 
     public func flipCameraPosition() {
-        guard let cameraTrack = room?.localParticipant.videoTracks.first?.track as? LocalVideoTrack,
-              
+        // 1. Prevent rapid-fire toggling which crashes the camera session
+        if isFlippingCamera {
+            print("VisionBotSDK: Camera flip already in progress, ignoring request")
+            return
+        }
+
+        // 2. Robust track lookup (finds the specific camera track, not just the first video track)
+        guard let cameraTrack = room?.localParticipant.videoTracks.first(where: { 
+            ($0.track as? LocalVideoTrack)?.capturer is CameraCapturer 
+        })?.track as? LocalVideoTrack,
         let cameraCapturer = cameraTrack.capturer as? CameraCapturer else {
             eventPublisher.send(.error(message: "Camera capturer not available.", error: nil))
             return
         }
 
+        isFlippingCamera = true
+        
         Task {
+            defer { isFlippingCamera = false }
             do {
-                let currentOptions = cameraCapturer.options
-                // Determine the new position
-                let newPosition: AVCaptureDevice.Position = if currentOptions.position == .front {
-                    .back
-                }else{
-                    .front
-                }
-                // try await cameraCapturer.switchCameraPosition()
-                try await cameraCapturer.set(cameraPosition: newPosition)
+                print("VisionBotSDK: Requesting camera switch...")
+                
+                // 3. Use the SDK's built-in toggle. 
+                // This is safer than manually calculating position and calling .set()
+                try await cameraCapturer.switchCameraPosition()
+                
+                print("VisionBotSDK: Camera switch command completed successfully")
             } catch {
+                print("VisionBotSDK: Failed to flip camera with error: \(error)")
+
+                 // 4. Recovery: If flip fails, force reset to Front camera
+                print("VisionBotSDK: Attempting to recover by resetting to Front camera...")
+                do {
+                    try await cameraCapturer.set(cameraPosition: .front)
+                    print("VisionBotSDK: Recovery to Front camera successful")
+                } catch let recoveryError {
+                    print("VisionBotSDK: Recovery failed with error: \(recoveryError)")
+                }
+
                 eventPublisher.send(.error(message: "Failed to flip camera", error: error))
             }
         }
