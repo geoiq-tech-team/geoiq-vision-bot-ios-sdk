@@ -21,17 +21,31 @@ public enum GeoVisionEvent {
     case participantAttributesChanged(participant: Participant, metadata: String)
     case transcriptionReceived(Participant,TrackPublication, [TranscriptionSegment])
     case connectionQualityChanged(quality: ConnectionQuality, participant: Participant)
+    case reconnecting
+    case reconnected
 }
 
 open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public let eventPublisher = PassthroughSubject<GeoVisionEvent, Never>()
     private(set) public var room: Room?
+    @MainActor
     private var isFlippingCamera = false
 
-
-    public override init() {
-        self.room = Room()
+    override init() {
+        let roomOptions = RoomOptions(
+            defaultCameraCaptureOptions: CameraCaptureOptions(position: .front),
+            defaultScreenShareCaptureOptions: ScreenShareCaptureOptions(),
+            defaultVideoPublishOptions: VideoPublishOptions(
+                simulcast: true  // Enable simulcast for better adaptive streaming
+            ),
+            defaultAudioPublishOptions: AudioPublishOptions(),
+            adaptiveStream: true,  // Automatically adjusts video quality based on subscriber viewport
+            dynacast: true,        // Pauses video layers when no subscribers are watching
+            e2eeOptions: nil,
+            reportRemoteTrackStatistics: true
+        )
+        self.room = Room(roomOptions: roomOptions)
         super.init()
         room?.delegates.add(delegate: self)
     }
@@ -61,7 +75,7 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
     }
 
     // MARK: - Public Methods
-
+    
     public func connect(url: String, token: String) {
         if let existingRoom = room,
            existingRoom.connectionState == .connected || existingRoom.connectionState == .connecting {
@@ -70,10 +84,16 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         }
         
         eventPublisher.send(.connecting(url: url, tokenSnippet: String(token.suffix(10))))
+
+        let connectOptions = ConnectOptions(
+            autoSubscribe: true,
+            reconnectAttempts: 5,        // Number of reconnection attempts
+            reconnectAttemptDelay: 3.0   // Delay between reconnect attempts in seconds
+        )
         
         Task {
             do {
-                try await room?.connect(url: url, token: token)
+                try await room?.connect(url: url, token: token, connectOptions: connectOptions)
                 
                 if let room = room {
                     room.localParticipant.add(delegate: self)
@@ -95,15 +115,24 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public func disconnect() {
         Task {
+            // Remove delegates before disconnecting
+            room?.localParticipant.remove(delegate: self)
+            for (_, participant) in room?.remoteParticipants ?? [:] {
+                participant.remove(delegate: self)
+            }
+            
             await room?.disconnect()
             eventPublisher.send(.disconnected(reason: "Manual disconnect"))
-            room = nil
         }
     }
 
+
     public func shutdown() {
-        disconnect()
-        room = nil
+        Task {
+            await room?.disconnect()
+            room?.delegates.remove(delegate: self)
+            room = nil
+        }
     }
 
     public func muteMicrophone(_ mute: Bool) {
@@ -120,12 +149,14 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public func enableCamera(_ enable: Bool) {
         guard let room = room else { return }
+        
         let options = CameraCaptureOptions(
             position: .front
         )
+        
         Task {
             do {
-                try await room.localParticipant.setCamera(enabled: enable, captureOptions: options)
+                try await room.localParticipant.setCamera(enabled: enable,captureOptions: options)
                 eventPublisher.send(.localCameraStateChanged(enabled: enable))
             } catch {
                 eventPublisher.send(.error(message: "Failed to toggle camera", error: error))
@@ -133,56 +164,97 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         }
     }
 
-    public func flipCameraPosition() {
-        // 1. Prevent rapid-fire toggling which crashes the camera session
-        if isFlippingCamera {
-            print("VisionBotSDK: Camera flip already in progress, ignoring request")
-            return
-        }
+    // public func flipCameraPosition() {
+    //     // 1. Prevent rapid-fire toggling which crashes the camera session
+    //     if isFlippingCamera {
+    //         print("VisionBotSDK: Camera flip already in progress, ignoring request")
+    //         return
+    //     }
 
-        // 2. Robust track lookup (finds the specific camera track, not just the first video track)
-        guard let cameraTrack = room?.localParticipant.videoTracks.first(where: { 
-            ($0.track as? LocalVideoTrack)?.capturer is CameraCapturer 
-        })?.track as? LocalVideoTrack,
-        let cameraCapturer = cameraTrack.capturer as? CameraCapturer else {
-            eventPublisher.send(.error(message: "Camera capturer not available.", error: nil))
-            return
-        }
+    //     // 2. Robust track lookup (finds the specific camera track, not just the first video track)
+    //     guard let cameraTrack = room?.localParticipant.videoTracks.first(where: { 
+    //         ($0.track as? LocalVideoTrack)?.capturer is CameraCapturer 
+    //     })?.track as? LocalVideoTrack,
+    //     let cameraCapturer = cameraTrack.capturer as? CameraCapturer else {
+    //         eventPublisher.send(.error(message: "Camera capturer not available.", error: nil))
+    //         return
+    //     }
 
-        isFlippingCamera = true
+    //     isFlippingCamera = true
         
-        Task {
+    //     Task {
+    //         defer { isFlippingCamera = false }
+    //         do {
+    //             print("VisionBotSDK: Requesting camera switch...")
+                
+    //             // 3. Use the SDK's built-in toggle. 
+    //             // This is safer than manually calculating position and calling .set()
+    //             try await cameraCapturer.switchCameraPosition()
+                
+    //             print("VisionBotSDK: Camera switch command completed successfully")
+    //         } catch {
+    //             print("VisionBotSDK: Failed to flip camera with error: \(error)")
+
+    //              // 4. Recovery: If flip fails, force reset to Front camera
+    //             print("VisionBotSDK: Attempting to recover by resetting to Front camera...")
+    //             do {
+    //                 try await cameraCapturer.set(cameraPosition: .front)
+    //                 print("VisionBotSDK: Recovery to Front camera successful")
+    //             } catch let recoveryError {
+    //                 print("VisionBotSDK: Recovery failed with error: \(recoveryError)")
+    //             }
+
+    //             eventPublisher.send(.error(message: "Failed to flip camera", error: error))
+    //         }
+    //     }
+    // }
+
+    public func flipCameraPosition() {
+        Task { @MainActor in
+            guard !isFlippingCamera else {
+                print("VisionBotSDK: Camera flip already in progress, ignoring request")
+                return
+            }
+            
+            guard let cameraTrack = room?.localParticipant.videoTracks.first(where: { 
+                ($0.track as? LocalVideoTrack)?.capturer is CameraCapturer 
+            })?.track as? LocalVideoTrack,
+            let cameraCapturer = cameraTrack.capturer as? CameraCapturer else {
+                eventPublisher.send(.error(message: "Camera capturer not available.", error: nil))
+                return
+            }
+
+            isFlippingCamera = true
             defer { isFlippingCamera = false }
+            
             do {
-                print("VisionBotSDK: Requesting camera switch...")
-                
-                // 3. Use the SDK's built-in toggle. 
-                // This is safer than manually calculating position and calling .set()
                 try await cameraCapturer.switchCameraPosition()
-                
-                print("VisionBotSDK: Camera switch command completed successfully")
             } catch {
-                print("VisionBotSDK: Failed to flip camera with error: \(error)")
-
-                 // 4. Recovery: If flip fails, force reset to Front camera
-                print("VisionBotSDK: Attempting to recover by resetting to Front camera...")
-                do {
-                    try await cameraCapturer.set(cameraPosition: .front)
-                    print("VisionBotSDK: Recovery to Front camera successful")
-                } catch let recoveryError {
-                    print("VisionBotSDK: Recovery failed with error: \(recoveryError)")
-                }
-
+                // Recovery logic...
                 eventPublisher.send(.error(message: "Failed to flip camera", error: error))
             }
         }
     }
 
+
+
+
+
+    
     // MARK: - RoomDelegate Methods
 
     public func room(_ room: Room, didUpdate connectionState: ConnectionState, oldState: ConnectionState) {
-        if connectionState == .disconnected {
-            eventPublisher.send(.disconnected(reason: "Connection lost"))
+        switch connectionState {
+            case .disconnected:
+                eventPublisher.send(.disconnected(reason: "Connection lost"))
+            case .reconnecting:
+                eventPublisher.send(.reconnecting)
+            case .connected:
+                if oldState == .reconnecting {
+                    eventPublisher.send(.reconnected)
+                }
+            default:
+                break
         }
     }
 
@@ -205,9 +277,28 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         eventPublisher.send(.customMessageReceived(from: from, message: message, topic: topic))
     }
 
+    // public func room(_ room: Room, didReceiveTranscription transcription: Room.Transcription, fromParticipant participant: RemoteParticipant) {
+    //     let senderId = participant.identity?.stringValue
+    //     for segment in transcription.segments {
+    //         eventPublisher.send(.transcriptionReceived(senderId: senderId, message: segment.text, isFinal: segment.isFinal))
+    //     }
+    // }
+
     public func room(_ room: Room, participant: Participant, trackPublication : TrackPublication, didReceiveTranscriptionSegments segments: [TranscriptionSegment]) {
         eventPublisher.send(.transcriptionReceived(participant, trackPublication, segments))
     }
+
+    public func room(_ room: Room, localParticipant: LocalParticipant, didFailToPublishTrackWithError error: Error) {
+        eventPublisher.send(.error(message: "Failed to publish track: \(error.localizedDescription)", error: error))
+    }
+
+    public func room(_ room: Room, participant: RemoteParticipant?, didUpdateNetworkQuality quality: ConnectionQuality) {
+        // Network-wide quality monitoring
+        if let participant = participant {
+            eventPublisher.send(.connectionQualityChanged(quality: quality, participant: participant))
+        }
+    }
+    
 
     // MARK: - ParticipantDelegate Methods
 
@@ -222,10 +313,12 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         guard let publication = participant.trackPublications[sid] else { return }
         eventPublisher.send(.trackUnsubscribed(track, publication, participant))
     }
-
-    public func participant(_ participant: RemoteParticipant, didReceiveData data: Data, forTopic topic: String) {
+    
+    public func participant(_ participant: RemoteParticipant, didReceiveData data: Data, forTopic topic: String, encryptionType: EncryptionType) {
         let message = String(data: data, encoding: .utf8) ?? "<invalid data>"
         let from = participant.identity?.stringValue
+        // You can now optionally log or check the encryption type
+        print("Received data with encryption type: \(encryptionType)")
         eventPublisher.send(.customMessageReceived(from: from, message: message, topic: topic))
     }
 
@@ -259,10 +352,12 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
             eventPublisher.send(.participantAttributesChanged(participant: participant, metadata: jsonString))
         }
     }
-
+    
     public func participant(_ participant: Participant, didUpdateConnectionQuality connectionQuality: ConnectionQuality) {
+        print("Connection quality changed: \(participant.identity?.stringValue ?? "unknown") - \(connectionQuality)")
         eventPublisher.send(
             .connectionQualityChanged(quality: connectionQuality, participant: participant)
         )
     }
+    
 }
