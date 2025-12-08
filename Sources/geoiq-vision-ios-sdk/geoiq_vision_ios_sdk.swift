@@ -123,6 +123,7 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
             
             await room?.disconnect()
             eventPublisher.send(.disconnected(reason: "Manual disconnect"))
+            room = nil
         }
     }
 
