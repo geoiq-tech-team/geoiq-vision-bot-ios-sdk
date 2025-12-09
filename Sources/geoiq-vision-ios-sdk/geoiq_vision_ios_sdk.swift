@@ -40,7 +40,7 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
             ),
             defaultAudioPublishOptions: AudioPublishOptions(),
             adaptiveStream: true,  // Automatically adjusts video quality based on subscriber viewport
-            dynacast: true,        // Pauses video layers when no subscribers are watching
+            dynacast: true        // Pauses video layers when no subscribers are watching
         )
         self.room = Room(roomOptions: roomOptions)
         super.init()
