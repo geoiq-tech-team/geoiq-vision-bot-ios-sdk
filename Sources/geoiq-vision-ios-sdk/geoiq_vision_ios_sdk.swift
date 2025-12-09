@@ -32,18 +32,15 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
     @MainActor
     private var isFlippingCamera = false
 
-    override init() {
+    public override init() {
         let roomOptions = RoomOptions(
             defaultCameraCaptureOptions: CameraCaptureOptions(position: .front),
-            defaultScreenShareCaptureOptions: ScreenShareCaptureOptions(),
             defaultVideoPublishOptions: VideoPublishOptions(
                 simulcast: true  // Enable simulcast for better adaptive streaming
             ),
             defaultAudioPublishOptions: AudioPublishOptions(),
             adaptiveStream: true,  // Automatically adjusts video quality based on subscriber viewport
             dynacast: true,        // Pauses video layers when no subscribers are watching
-            e2eeOptions: nil,
-            reportRemoteTrackStatistics: true
         )
         self.room = Room(roomOptions: roomOptions)
         super.init()
@@ -232,6 +229,13 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
                 try await cameraCapturer.switchCameraPosition()
             } catch {
                 // Recovery logic...
+                print("VisionBotSDK: Attempting to recover by resetting to Front camera...")
+                do {
+                    try await cameraCapturer.set(cameraPosition: .front)
+                    print("VisionBotSDK: Recovery to Front camera successful")
+                } catch let recoveryError {
+                    print("VisionBotSDK: Recovery failed with error: \(recoveryError)")
+                }
                 eventPublisher.send(.error(message: "Failed to flip camera", error: error))
             }
         }
