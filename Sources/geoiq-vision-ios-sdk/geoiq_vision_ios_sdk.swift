@@ -21,28 +21,17 @@ public enum GeoVisionEvent {
     case participantAttributesChanged(participant: Participant, metadata: String)
     case transcriptionReceived(Participant,TrackPublication, [TranscriptionSegment])
     case connectionQualityChanged(quality: ConnectionQuality, participant: Participant)
-    case reconnecting
-    case reconnected
 }
 
 open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public let eventPublisher = PassthroughSubject<GeoVisionEvent, Never>()
     private(set) public var room: Room?
-    @MainActor
     private var isFlippingCamera = false
+    private var registeredStreamTopics: Set<String> = []
 
-    public override init() {
-        let roomOptions = RoomOptions(
-            defaultCameraCaptureOptions: CameraCaptureOptions(position: .front),
-            defaultVideoPublishOptions: VideoPublishOptions(
-                simulcast: true  // Enable simulcast for better adaptive streaming
-            ),
-            defaultAudioPublishOptions: AudioPublishOptions(),
-            adaptiveStream: true,  // Automatically adjusts video quality based on subscriber viewport
-            dynacast: true        // Pauses video layers when no subscribers are watching
-        )
-        self.room = Room(roomOptions: roomOptions)
+    publicoverride init() {
+        self.room = Room()
         super.init()
         room?.delegates.add(delegate: self)
     }
@@ -81,19 +70,19 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         }
         
         eventPublisher.send(.connecting(url: url, tokenSnippet: String(token.suffix(10))))
-
-        let connectOptions = ConnectOptions(
-            autoSubscribe: true,
-            reconnectAttempts: 5,        // Number of reconnection attempts
-            reconnectAttemptDelay: 3.0   // Delay between reconnect attempts in seconds
-        )
         
         Task {
             do {
-                try await room?.connect(url: url, token: token, connectOptions: connectOptions)
+                try await room?.connect(url: url, token: token)
                 
                 if let room = room {
                     room.localParticipant.add(delegate: self)
+
+                    // Clean and simple - just register the handler
+                    let topic = "lk_va_send_text"
+                    try await room.registerTextStreamHandler(for: topic,onNewStream: handleTextStream)
+                    registeredStreamTopics.insert(topic)
+
                     // :dart: THIS IS THE FIX: Manually handle existing participants
                     for (_, participant) in room.remoteParticipants {
                         // Add delegate to receive events from this participant
@@ -112,25 +101,24 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public func disconnect() {
         Task {
-            // Remove delegates before disconnecting
-            room?.localParticipant.remove(delegate: self)
-            for (_, participant) in room?.remoteParticipants ?? [:] {
-                participant.remove(delegate: self)
+            // Unregister all text stream handlers
+            if let room = room {
+                for topic in registeredStreamTopics {
+                    await room.unregisterTextStreamHandler(for: topic)
+                }
+                registeredStreamTopics.removeAll()
             }
-            
+
+
             await room?.disconnect()
             eventPublisher.send(.disconnected(reason: "Manual disconnect"))
             room = nil
         }
     }
 
-
     public func shutdown() {
-        Task {
-            await room?.disconnect()
-            room?.delegates.remove(delegate: self)
-            room = nil
-        }
+        disconnect()
+        room = nil
     }
 
     public func muteMicrophone(_ mute: Bool) {
@@ -162,73 +150,38 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         }
     }
 
-    // public func flipCameraPosition() {
-    //     // 1. Prevent rapid-fire toggling which crashes the camera session
-    //     if isFlippingCamera {
-    //         print("VisionBotSDK: Camera flip already in progress, ignoring request")
-    //         return
-    //     }
-
-    //     // 2. Robust track lookup (finds the specific camera track, not just the first video track)
-    //     guard let cameraTrack = room?.localParticipant.videoTracks.first(where: { 
-    //         ($0.track as? LocalVideoTrack)?.capturer is CameraCapturer 
-    //     })?.track as? LocalVideoTrack,
-    //     let cameraCapturer = cameraTrack.capturer as? CameraCapturer else {
-    //         eventPublisher.send(.error(message: "Camera capturer not available.", error: nil))
-    //         return
-    //     }
-
-    //     isFlippingCamera = true
-        
-    //     Task {
-    //         defer { isFlippingCamera = false }
-    //         do {
-    //             print("VisionBotSDK: Requesting camera switch...")
-                
-    //             // 3. Use the SDK's built-in toggle. 
-    //             // This is safer than manually calculating position and calling .set()
-    //             try await cameraCapturer.switchCameraPosition()
-                
-    //             print("VisionBotSDK: Camera switch command completed successfully")
-    //         } catch {
-    //             print("VisionBotSDK: Failed to flip camera with error: \(error)")
-
-    //              // 4. Recovery: If flip fails, force reset to Front camera
-    //             print("VisionBotSDK: Attempting to recover by resetting to Front camera...")
-    //             do {
-    //                 try await cameraCapturer.set(cameraPosition: .front)
-    //                 print("VisionBotSDK: Recovery to Front camera successful")
-    //             } catch let recoveryError {
-    //                 print("VisionBotSDK: Recovery failed with error: \(recoveryError)")
-    //             }
-
-    //             eventPublisher.send(.error(message: "Failed to flip camera", error: error))
-    //         }
-    //     }
-    // }
-
     public func flipCameraPosition() {
-        Task { @MainActor in
-            guard !isFlippingCamera else {
-                print("VisionBotSDK: Camera flip already in progress, ignoring request")
-                return
-            }
-            
-            guard let cameraTrack = room?.localParticipant.videoTracks.first(where: { 
-                ($0.track as? LocalVideoTrack)?.capturer is CameraCapturer 
-            })?.track as? LocalVideoTrack,
-            let cameraCapturer = cameraTrack.capturer as? CameraCapturer else {
-                eventPublisher.send(.error(message: "Camera capturer not available.", error: nil))
-                return
-            }
+        // 1. Prevent rapid-fire toggling which crashes the camera session
+        if isFlippingCamera {
+            print("VisionBotSDK: Camera flip already in progress, ignoring request")
+            return
+        }
 
-            isFlippingCamera = true
+        // 2. Robust track lookup (finds the specific camera track, not just the first video track)
+        guard let cameraTrack = room?.localParticipant.videoTracks.first(where: { 
+            ($0.track as? LocalVideoTrack)?.capturer is CameraCapturer 
+        })?.track as? LocalVideoTrack,
+        let cameraCapturer = cameraTrack.capturer as? CameraCapturer else {
+            eventPublisher.send(.error(message: "Camera capturer not available.", error: nil))
+            return
+        }
+
+        isFlippingCamera = true
+        
+        Task {
             defer { isFlippingCamera = false }
-            
             do {
+                print("VisionBotSDK: Requesting camera switch...")
+                
+                // 3. Use the SDK's built-in toggle. 
+                // This is safer than manually calculating position and calling .set()
                 try await cameraCapturer.switchCameraPosition()
+                
+                print("VisionBotSDK: Camera switch command completed successfully")
             } catch {
-                // Recovery logic...
+                print("VisionBotSDK: Failed to flip camera with error: \(error)")
+
+                 // 4. Recovery: If flip fails, force reset to Front camera
                 print("VisionBotSDK: Attempting to recover by resetting to Front camera...")
                 do {
                     try await cameraCapturer.set(cameraPosition: .front)
@@ -236,30 +189,17 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
                 } catch let recoveryError {
                     print("VisionBotSDK: Recovery failed with error: \(recoveryError)")
                 }
+
                 eventPublisher.send(.error(message: "Failed to flip camera", error: error))
             }
         }
     }
-
-
-
-
-
     
     // MARK: - RoomDelegate Methods
 
     public func room(_ room: Room, didUpdate connectionState: ConnectionState, oldState: ConnectionState) {
-        switch connectionState {
-            case .disconnected:
-                eventPublisher.send(.disconnected(reason: "Connection lost"))
-            case .reconnecting:
-                eventPublisher.send(.reconnecting)
-            case .connected:
-                if oldState == .reconnecting {
-                    eventPublisher.send(.reconnected)
-                }
-            default:
-                break
+        if connectionState == .disconnected {
+            eventPublisher.send(.disconnected(reason: "Connection lost"))
         }
     }
 
@@ -291,17 +231,6 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public func room(_ room: Room, participant: Participant, trackPublication : TrackPublication, didReceiveTranscriptionSegments segments: [TranscriptionSegment]) {
         eventPublisher.send(.transcriptionReceived(participant, trackPublication, segments))
-    }
-
-    public func room(_ room: Room, localParticipant: LocalParticipant, didFailToPublishTrackWithError error: Error) {
-        eventPublisher.send(.error(message: "Failed to publish track: \(error.localizedDescription)", error: error))
-    }
-
-    public func room(_ room: Room, participant: RemoteParticipant?, didUpdateNetworkQuality quality: ConnectionQuality) {
-        // Network-wide quality monitoring
-        if let participant = participant {
-            eventPublisher.send(.connectionQualityChanged(quality: quality, participant: participant))
-        }
     }
     
 
@@ -363,6 +292,32 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
         eventPublisher.send(
             .connectionQualityChanged(quality: connectionQuality, participant: participant)
         )
+    }
+
+
+    // Private Methods
+
+    private func handleTextStream(reader: TextStreamReader, participantIdentity: Participant.Identity) async {
+        let info = reader.info
+        
+        do {
+            // Get complete text after stream finishes
+            let fullText = try await reader.readAll()
+            //  Print the full text
+            print("Text stream received from \(participantIdentity.stringValue): \(fullText)")
+            eventPublisher.send(.customMessageReceived(
+                from: participantIdentity.stringValue, 
+                message: fullText, 
+                topic: info.topic
+            ))
+            
+        } catch {
+            print("Text stream error: \(error)")
+            eventPublisher.send(.error(
+                message: "Text stream failed: \(error.localizedDescription)", 
+                error: error
+            ))
+        }
     }
     
 }
