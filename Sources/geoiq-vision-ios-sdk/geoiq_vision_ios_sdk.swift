@@ -23,7 +23,7 @@ public enum GeoVisionEvent {
     case connectionQualityChanged(quality: ConnectionQuality, participant: Participant)
 }
 
-public class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
+open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public let eventPublisher = PassthroughSubject<GeoVisionEvent, Never>()
     private(set) public var room: Room?
