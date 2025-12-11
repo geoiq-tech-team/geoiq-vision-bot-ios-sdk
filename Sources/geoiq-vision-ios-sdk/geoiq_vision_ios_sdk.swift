@@ -30,7 +30,7 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
     private var isFlippingCamera = false
     private var registeredStreamTopics: Set<String> = []
 
-    publicoverride init() {
+    public override init() {
         self.room = Room()
         super.init()
         room?.delegates.add(delegate: self)
