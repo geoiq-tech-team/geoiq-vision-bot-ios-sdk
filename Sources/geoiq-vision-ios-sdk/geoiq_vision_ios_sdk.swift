@@ -79,7 +79,7 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
                     room.localParticipant.add(delegate: self)
 
                     // Clean and simple - just register the handler
-                    let topic = "lk_va_send_text"
+                    let topic = "lk_va_publish"
                     try await room.registerTextStreamHandler(for: topic,onNewStream: handleTextStream)
                     registeredStreamTopics.insert(topic)
 
