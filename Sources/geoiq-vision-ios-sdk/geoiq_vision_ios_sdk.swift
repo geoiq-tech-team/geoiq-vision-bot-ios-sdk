@@ -4,7 +4,7 @@ import Combine
 import AVFoundation
 
 public enum GeoVisionEvent {
-    case connecting(url: String, tokenSnippet: String)
+    case connecting(url: String?)
     case connected(roomName: String, localParticipant: LocalParticipant)
     case disconnected(reason: String?)
     case participantJoined(RemoteParticipant)
@@ -69,29 +69,16 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
             return
         }
         
-        eventPublisher.send(.connecting(url: url, tokenSnippet: String(token.suffix(10))))
-        
         Task {
             do {
                 try await room?.connect(url: url, token: token)
                 
                 if let room = room {
                     room.localParticipant.add(delegate: self)
-
                     // Clean and simple - just register the handler
                     let topic = "lk_va_publish"
                     try await room.registerTextStreamHandler(for: topic,onNewStream: handleTextStream)
                     registeredStreamTopics.insert(topic)
-
-                    // :dart: THIS IS THE FIX: Manually handle existing participants
-                    for (_, participant) in room.remoteParticipants {
-                        // Add delegate to receive events from this participant
-                        participant.add(delegate: self)
-                        // Manually trigger YOUR handler (since delegate won't be called)
-                        eventPublisher.send(.participantJoined(participant))
-                    }
-                    
-                    eventPublisher.send(.connected(roomName: room.name ?? "Unnamed", localParticipant: room.localParticipant))
                 }
             } catch {
                 eventPublisher.send(.error(message: "Connection failed: \(error.localizedDescription)", error: error))
@@ -197,9 +184,41 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
     
     // MARK: - RoomDelegate Methods
 
-    public func room(_ room: Room, didUpdate connectionState: ConnectionState, oldState: ConnectionState) {
-        if connectionState == .disconnected {
-            eventPublisher.send(.disconnected(reason: "Connection lost"))
+
+    public func room(_ room: Room, didUpdateConnectionState connectionState: ConnectionState, from oldConnectionState: ConnectionState) {
+        print("🔌 [ConnectionState] Room '\(room.name ?? "Unnamed")' state changed:")
+        print("   From: \(oldConnectionState)")
+        print("   To: \(connectionState)")
+        
+        switch connectionState {
+            case .disconnected:
+                print("❌ [ConnectionState] DISCONNECTED")
+                eventPublisher.send(.disconnected(reason: "Connection lost"))
+            case .connecting:
+                print("🔄 [ConnectionState] CONNECTING...")
+                eventPublisher.send(.connecting(url: room.url))
+            case .reconnecting:
+                print("🔄 [ConnectionState] RECONNECTING...")
+            case .connected:
+                print("✅ [ConnectionState] CONNECTED")
+                for (_, participant) in room.remoteParticipants {
+                    participant.add(delegate: self)
+                    eventPublisher.send(.participantJoined(participant))
+                    
+                    // Handle their existing tracks
+                    for (_, publication) in participant.trackPublications {
+                        if let remotePublication = publication as? RemoteTrackPublication,
+                        let track = remotePublication.track {
+                            eventPublisher.send(.trackSubscribed(track, publication, participant))
+                        }
+                    }
+                }
+                eventPublisher.send(.connected(
+                    roomName: room.name ?? "Unnamed", 
+                    localParticipant: room.localParticipant
+                ))
+            @unknown default:
+                print("⚠️ [ConnectionState] Unknown state: \(connectionState)")
         }
     }
 
@@ -231,6 +250,16 @@ open class VisionBotSDKMananger: NSObject, RoomDelegate, ParticipantDelegate {
 
     public func room(_ room: Room, participant: Participant, trackPublication : TrackPublication, didReceiveTranscriptionSegments segments: [TranscriptionSegment]) {
         eventPublisher.send(.transcriptionReceived(participant, trackPublication, segments))
+    }
+
+    public func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
+        print("❌ [Disconnect] Room disconnected with error: \(error?.localizedDescription ?? "unknown")")
+        eventPublisher.send(.disconnected(reason: error?.localizedDescription ?? "Connection lost"))
+    }
+
+    public func room(_ room: Room, didFailToConnectWithError error: LiveKitError?) {
+        print("❌ [ConnectionFailed] Failed to connect: \(error?.localizedDescription ?? "unknown")")
+        eventPublisher.send(.error(message: "Connection failed", error: error))
     }
     
 
